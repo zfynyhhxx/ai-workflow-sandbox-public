@@ -1,0 +1,64 @@
+# 待用户批准后才用于真实项目。此处不启用 FishMuse 或 DevFlow。
+$schema: https://raw.githubusercontent.com/useagent/ao/main/schema/config.schema.json
+port: 3000
+lifecycle:
+  autoCleanupOnMerge: false
+defaults:
+  runtime: tmux
+  agent: codex
+  workspace: worktree
+  notifiers: []
+projects:
+  workflow-sandbox:
+    name: Workflow Sandbox
+    repo: zfynyhhxx/ai-workflow-sandbox-public
+    path: ~/Projects/ai-workflow-sandbox-public
+    defaultBranch: main
+    sessionPrefix: wfsp
+    opencodeIssueSessionStrategy: ignore
+    orchestrator:
+      agent: codex
+      agentConfig:
+        permissions: suggest
+    worker:
+      agent: codex
+      agentConfig:
+        permissions: suggest
+    agentRules: |
+      仅执行已批准任务；不得自动 push、创建或合并 PR、部署、发布。
+      不启动子 Agent；发生规则冲突就停下报告。不得读取密钥。
+reactions:
+  pr-closed:
+    auto: false
+    action: notify
+  bugbot-comments:
+    auto: false
+    action: notify
+  merge-conflicts:
+    auto: false
+    action: notify
+  agent-idle:
+    auto: false
+    action: notify
+  agent-stuck:
+    auto: false
+    action: notify
+  agent-needs-input:
+    auto: false
+    action: notify
+  agent-exited:
+    auto: false
+    action: notify
+  all-complete:
+    auto: false
+    action: notify
+  ci-failed:
+    auto: false
+    action: notify
+    retries: 1
+  changes-requested:
+    auto: false
+    action: notify
+  approved-and-green:
+    auto: false
+    action: notify

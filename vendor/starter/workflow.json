@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "tiers": {
+    "T1": "claude-api",
+    "T2": "codex-chatgpt",
+    "T3": "deepseek-api"
+  },
+  "profiles": {
+    "claude-api": {
+      "harness": "claude",
+      "provider": "anthropic",
+      "model": "opus",
+      "auth": "anthropic-api-key",
+      "executable": "claude"
+    },
+    "codex-chatgpt": {
+      "harness": "codex",
+      "provider": "openai",
+      "model": null,
+      "auth": "chatgpt-login",
+      "executable": "codex"
+    },
+    "deepseek-api": {
+      "harness": "opencode",
+      "provider": "deepseek",
+      "model": "deepseek/deepseek-flash",
+      "auth": "opencode-saved-account",
+      "executable": "opencode"
+    }
+  },
+  "roles": {
+    "Director": {
+      "default_tier": "T2",
+      "prompt": "roles/Director.md",
+      "control_only": false
+    },
+    "Router": {
+      "default_tier": "T3",
+      "prompt": "roles/Router.md",
+      "control_only": false
+    },
+    "Planner": {
+      "default_tier": "T2",
+      "prompt": "roles/Planner.md",
+      "control_only": false
+    },
+    "Dispatcher": {
+      "default_tier": "T2",
+      "prompt": "roles/Dispatcher.md",
+      "control_only": true
+    },
+    "Builder": {
+      "default_tier": "T2",
+      "prompt": "roles/Builder.md",
+      "control_only": false
+    },
+    "Reviewer": {
+      "default_tier": "T2",
+      "prompt": "roles/Reviewer.md",
+      "control_only": false
+    },
+    "Knowledge": {
+      "default_tier": "T3",
+      "prompt": "roles/Knowledge.md",
+      "control_only": false
+    }
+  },
+  "high_risk_tags": [
+    "security",
+    "credentials",
+    "privacy",
+    "schema",
+    "migration",
+    "concurrency",
+    "public-api",
+    "architecture",
+    "governance",
+    "playback",
+    "canonical-graph"
+  ],
+  "high_risk_paths": [
+    "AGENTS.md",
+    "*/AGENTS.md",
+    ".github/*",
+    ".codex/*",
+    ".claude/*",
+    ".opencode/*",
+    "*migration*",
+    "*credential*"
+  ],
+  "knowledge_tier": "T3"
+}

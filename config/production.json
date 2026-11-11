@@ -1,0 +1,7 @@
+{
+  "mode": "production",
+  "workflow_config": "~/.local/share/ai-workflow/AI-Workflow-Starter-2026-11-11/workflow.json",
+  "anthropic_account_config": "~/.config/ai-workflow/anthropic.json",
+  "anthropic_secret": "~/.config/ai-workflow/secrets/anthropic.key",
+  "fallback_to_validation": false
+}

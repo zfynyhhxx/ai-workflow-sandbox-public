@@ -1,0 +1,11 @@
+#!/bin/sh
+# AO 初次联调一律只读；这是防误操作包装，不是 OS 安全边界。
+for arg in "$@"; do
+  case "$arg" in
+    --dangerously*|--full-auto|--yolo|-s*|--sandbox*|-c|--config|--config=*)
+      printf '%s\n' '拒绝覆盖 AO 只读隔离策略。' >&2
+      exit 2
+      ;;
+  esac
+done
+exec "$HOME/.npm-global/bin/codex" --sandbox read-only "$@"

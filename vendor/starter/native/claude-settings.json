@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(~/.codex/auth.json)",
+      "Bash(git push *)",
+      "Bash(gh pr *)",
+      "Agent",
+      "Task"
+    ]
+  }
+}

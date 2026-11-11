@@ -1,0 +1,8 @@
+{
+  "name": "workflow-sandbox",
+  "workflow_approved": true,
+  "note": "仅限人工创建的练习仓库；此字段不是安全边界或真实审批凭证。",
+  "allow_paid_calls": false,
+  "allow_delegation": false,
+  "allow_external_writes": false
+}

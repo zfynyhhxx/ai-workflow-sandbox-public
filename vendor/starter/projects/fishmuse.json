@@ -1,0 +1,10 @@
+{
+  "name": "FishMuse",
+  "workflow_approved": false,
+  "repo_path": "~/Projects/Fishmuse",
+  "default_branch": "feature/fishmuse-v0.1-muse-loop",
+  "allow_paid_calls": false,
+  "allow_delegation": false,
+  "allow_external_writes": false,
+  "note": "现有规则禁止子 Agent，外部写入和付费需单独授权。此样例不自动修改项目规则。"
+}

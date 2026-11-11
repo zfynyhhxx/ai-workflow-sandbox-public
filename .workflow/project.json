@@ -1,0 +1,18 @@
+{
+  "repository": "zfynyhhxx/ai-workflow-sandbox-public",
+  "base_branch": "main",
+  "max_paid_concurrency": 1,
+  "budget_cap_microusd": 1000000,
+  "acceptance_templates": {
+    "normalize_labels_v1": {
+      "source": ".workflow/acceptance/test_labels.py",
+      "destination": "tests/test_labels.py",
+      "expected_red": "No module named 'demo.labels'"
+    }
+  },
+  "portfolio": {
+    "owner": "zfynyhhxx",
+    "number": 1
+  },
+  "execution_backend": "ao"
+}

@@ -1,0 +1,22 @@
+{
+  "checked_date": "2026-11-11",
+  "timezone": "Asia/Shanghai",
+  "ao_source_commit": "e55012793c90e1a6f01fe47530139045d95f0d9a",
+  "npm_metadata_only": {
+    "@aoagents/ao": "0.10.3",
+    "@opencode/cli": "2.2.7"
+  },
+  "schemas": [
+    {
+      "title": "OpenCode V2 Schema",
+      "url": "https://opencode.ai/config.json",
+      "sha256": "589222e2975602552fb5dc71f4abb7686abf906df49552210de6624139a9b5d3"
+    },
+    {
+      "title": "AO config Schema",
+      "url": "https://github.com/useagent/ao/blob/e55012793c90e1a6f01fe47530139045d95f0d9a/schema/config.schema.json",
+      "sha256": "6ccd80931ee95a8b79ab4e3d119b1dd4913820d21fe7983129c96b9603687fc4"
+    }
+  ],
+  "notice": "Schema 是本次获取的官方快照；配置通过静态校验不代表发布包运行或 API 已验证。未附第三方源码或整份文档。"
+}

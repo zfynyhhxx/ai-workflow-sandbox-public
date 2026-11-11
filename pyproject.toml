@@ -1,0 +1,6 @@
+[project]
+name = "ai-workflow-connector"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "现有 CLI 和 AO 之间的受控执行连接层"
+dependencies = []

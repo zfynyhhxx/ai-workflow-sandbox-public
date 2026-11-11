@@ -1,0 +1,1 @@
+Vendored immutable starter source for isolated CI only; local runtime authority remains the installed starter package. Source: Desktop AI-Workflow-Starter-2026-11-11.zip. No credentials or private source included.

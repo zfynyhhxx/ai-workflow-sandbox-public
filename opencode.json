@@ -1,0 +1,122 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek/deepseek-flash",
+  "default_agent": "wf-builder",
+  "share": "disabled",
+  "permissions": [
+    {
+      "action": "*",
+      "resource": "*",
+      "effect": "ask"
+    },
+    {
+      "action": "read",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "glob",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "grep",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "external_directory",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": "*.env*",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": "*auth.json",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": "*credentials*",
+      "effect": "deny"
+    },
+    {
+      "action": "subagent",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*",
+      "effect": "ask"
+    },
+    {
+      "action": "shell",
+      "resource": "git push *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "gh pr *",
+      "effect": "deny"
+    }
+  ],
+  "agents": {
+    "wf-builder": {
+      "description": "执行已批准的低风险实施任务",
+      "mode": "primary",
+      "steps": 16,
+      "system": "只实施人工批准的任务。先读 AGENTS.md，不启动子 Agent，不操作远端，不读密钥。"
+    },
+    "wf-knowledge": {
+      "description": "从已筛选资料生成知识草稿正文",
+      "mode": "primary",
+      "steps": 8,
+      "system": "只读已筛选的上下文，提炼可复用知识，输出正文。不操作 Vault，不审批。",
+      "permissions": [
+        {
+          "action": "*",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "context/*",
+          "effect": "allow"
+        },
+        {
+          "action": "glob",
+          "resource": "context/*",
+          "effect": "allow"
+        }
+      ]
+    },
+    "wf-readonly": {
+      "description": "承担只读角色，以执行包中的具体角色合同为准",
+      "mode": "primary",
+      "steps": 12,
+      "system": "仅做已批准的只读分析，以执行包的角色合同为准，不写文件、不启动子 Agent。",
+      "permissions": [
+        {
+          "action": "*",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "context/*",
+          "effect": "allow"
+        },
+        {
+          "action": "glob",
+          "resource": "context/*",
+          "effect": "allow"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "mode": "validation",
+  "budget_cap_microusd": 1000000,
+  "scope": "仅用于本轮验证，不写回 production.json 或用户全局配置",
+  "overrides": {
+    "claude-api": {"provider": "deepseek", "model": "deepseek-flash", "protocol": "anthropic-compatible"}
+  },
+  "pricing_source": "https://api-docs.deepseek.com/quick_start/pricing/",
+  "pricing_checked": "2026-11-12",
+  "input_cache_miss_usd_per_million": "0.30",
+  "output_usd_per_million": "1.20",
+  "accounting": "使用峰时上限保守记账；实际费用未知时为 null，不记 0"
+}

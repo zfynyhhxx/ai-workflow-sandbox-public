@@ -1,0 +1,18 @@
+{
+  "id": "demo-doc-001",
+  "role": "Builder",
+  "summary": "为练习仓库 README 增加测试命令说明",
+  "requirements_clear": true,
+  "bounded": true,
+  "modules": 1,
+  "paths": [
+    "README.md"
+  ],
+  "risk_tags": [],
+  "attempts": 0,
+  "acceptance": [
+    "仅修改 README.md",
+    "命令与仓库配置一致",
+    "git diff --check 通过"
+  ]
+}

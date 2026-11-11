@@ -1,0 +1,3 @@
+# 不改变当前默认模型和 ChatGPT 登录。命令行仍应显式指定隔离模式。
+sandbox_mode = "read-only"
+approval_policy = "untrusted"
