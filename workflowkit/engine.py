@@ -1,5 +1,6 @@
 """连接既有工具的受控流水线；批准、模型建议、CI 和人类合并不是同一状态。"""
 import json
+import hashlib
 import os
 from pathlib import Path
 import secrets
@@ -100,6 +101,8 @@ class Engine:
             model=model.rsplit('/',1)[-1] if isinstance(model,str) else None
             if model!='deepseek-flash': raise GateError('UNPRICED_MODEL: 不擅自替换或使用未定价模型')
         context={'effective_project_rules':(self.repo/'AGENTS.md').read_text(),
+                 'execution_identity':{'role':role,'tier':decision['tier'],'profile':decision['profile'],
+                    'harness':harness,'provider':provider,'requested_model':profile.get('model'),'actual_model':None},
                  'artifact_protocol':context,'notice':'approved 仅是独立 Reviewer 的审查建议，不代替人工授权或合并'}
         prompt=role_prompt(role,task,context)
         folder=Path(folder); folder.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -163,17 +166,35 @@ class Engine:
         return names
 
     def gate(self,worktree,folder):
+        core=self.repo/'scripts/verify_core.py'
         args=['bwrap','--unshare-all','--die-with-parent','--new-session',
               '--ro-bind','/usr','/usr','--symlink','usr/bin','/bin','--symlink','usr/lib','/lib',
               '--symlink','usr/lib64','/lib64','--proc','/proc','--dev','/dev','--tmpfs','/tmp',
               '--dir','/home/worker','--ro-bind',str(worktree),'/workspace','--chdir','/workspace',
               '--ro-bind',str(STARTER),'/home/worker/.local/share/ai-workflow/AI-Workflow-Starter-2026-11-11',
+              '--dir','/runtime','--ro-bind',str(core),'/runtime/verify_core.py',
               '--clearenv','--setenv','HOME','/home/worker','--setenv','PATH','/usr/bin:/bin',
-              '--setenv','PYTHONDONTWRITEBYTECODE','1','/usr/bin/python3','-m','unittest','discover','-s','tests','-q']
-        execute(args,cwd=self.repo,prompt='',timeout=180,log=folder/'checks.json')
+              '--setenv','PYTHONDONTWRITEBYTECODE','1','/usr/bin/python3','/runtime/verify_core.py']
+        output=execute(args,cwd=self.repo,prompt='',timeout=180,log=folder/'checks.json')
+        try: manifest=json.loads(output.splitlines()[-1])
+        except (ValueError,IndexError) as exc: raise GateError('INVALID_VERIFICATION_EVIDENCE') from exc
+        if (manifest.get('schema')!='wf-core-checks-v1' or manifest.get('passed') is not True
+            or [s.get('name') for s in manifest.get('steps',[])]!=['project-tests','starter-tests','syntax-and-config']
+            or any(s.get('returncode')!=0 or s.get('passed') is not True for s in manifest['steps'])
+            or any(type(s.get('tests')) is not int or s['tests']<=0 for s in manifest['steps'][:2])):
+            raise GateError('INCOMPLETE_VERIFICATION_EVIDENCE')
         # 两项都是控制面自己的固定程序，不执行任务提供的 shell 字符串。
         command(['python3',str(self.repo/'scripts/secret_scan.py')],worktree)
+        git(worktree,'diff','--check')
         git(worktree,'diff','--cached','--check')
+        result={'schema':'wf-verification-v1','tree':git(worktree,'write-tree'),'core':manifest,
+                'core_sha256':hashlib.sha256(core.read_bytes()).hexdigest(),
+                'record_sha256':hashlib.sha256((folder/'checks.json').read_bytes()).hexdigest(),
+                'isolation':{'network':'unshared','workspace':'read-only','host_credentials':'not mounted'},
+                'static_checks':[{'command':args,'returncode':0} for args in
+                    (['python3','scripts/secret_scan.py'],['git','diff','--check'],['git','diff','--cached','--check'])]}
+        record=folder/'verification.json'; record.write_text(json.dumps(result,ensure_ascii=False)); os.chmod(record,0o600)
+        return result
 
     def acceptance(self,worktree,task):
         name=task.get('acceptance_template')
@@ -203,7 +224,7 @@ class Engine:
             if (git(worktree,'status','--porcelain') or git(worktree,'rev-parse','HEAD^')!=subject['base']
                 or git(worktree,'rev-parse','HEAD^{tree}')!=saved['tree']):
                 raise GateError('恢复时提交不匹配已通过验收的冻结 tree')
-            payload.update(head=current_head,allowed=saved['allowed']); state('REVIEW'); return
+            payload.update(head=current_head,allowed=saved['allowed'],verification=saved['verification']); state('REVIEW'); return
         if task.get('acceptance_template') and not payload.get('baseline_red'):
             controlled=self.acceptance(worktree,task)
             git(worktree,'add','--',*controlled)
@@ -243,13 +264,17 @@ class Engine:
             git(worktree,'add','--',*sorted(allowed))
             check_folder=folder/f'check-{attempt}'; check_folder.mkdir(exist_ok=True)
             try:
-                state('VERIFYING'); self.gate(worktree,check_folder)
+                state('VERIFYING'); verification=self.gate(worktree,check_folder)
             except GateError as exc:
                 log=check_folder/'checks.json'
                 detail=json.loads(log.read_text()).get('stderr','')[-8000:] if log.exists() else str(exc)
                 errors.append(detail); payload['next_attempt']=attempt+1; state('RUNNING'); continue
             payload['allowed']=sorted(allowed)
-            checkpoint.write_text(json.dumps({'tree':git(worktree,'write-tree'),'allowed':payload['allowed']}))
+            if verification['tree']!=git(worktree,'write-tree'):
+                raise GateError('VERIFIED_TREE_CHANGED')
+            payload['verification']=verification
+            checkpoint.write_text(json.dumps({'tree':verification['tree'],'allowed':payload['allowed'],
+                                              'verification':verification}))
             os.chmod(checkpoint,0o600)
             git(worktree,'commit','-m',f'feat: 完成练习任务 #{number}')
             payload['head']=git(worktree,'rev-parse','HEAD'); state('REVIEW'); return
@@ -258,6 +283,68 @@ class Engine:
     def _frozen(self,payload):
         if git(payload['worktree'],'rev-parse','HEAD')!=payload['head'] or git(payload['worktree'],'status','--porcelain'):
             raise GateError('候选变化使审查或验收失效')
+
+    def _review_context(self,task,subject,payload,folder):
+        """提供可核对的来源与结果，而不是把“检查通过”当成证据。"""
+        self._frozen(payload)
+        if self.subject(task)!=subject or not self.store.authorized(subject,'run'):
+            raise GateError('REVIEW_APPROVAL_CHANGED')
+        worktree=Path(payload['worktree']); head=payload['head']
+        verification=payload.get('verification')
+        if not isinstance(verification,dict): raise GateError('MISSING_VERIFICATION_EVIDENCE')
+        check_folder=folder/f'check-{payload["attempts"]-1}'
+        try:
+            saved=json.loads((check_folder/'verification.json').read_text())
+            execution=json.loads((check_folder/'checks.json').read_text())
+            recorded_core=json.loads(execution['stdout'].splitlines()[-1])
+            verified_tree,record_sha256,core_sha256=verification['tree'],verification['record_sha256'],verification['core_sha256']
+            core_passed=verification['core']['passed']
+        except (OSError,ValueError,KeyError,IndexError,TypeError) as exc:
+            raise GateError('INVALID_VERIFICATION_EVIDENCE') from exc
+        if (digest(saved)!=digest(verification) or verified_tree!=git(worktree,'rev-parse',head+'^{tree}')
+            or record_sha256!=hashlib.sha256((check_folder/'checks.json').read_bytes()).hexdigest()
+            or core_sha256!=hashlib.sha256((self.repo/'scripts/verify_core.py').read_bytes()).hexdigest()
+            or execution.get('returncode')!=0 or core_passed is not True or recorded_core!=verification['core']):
+            raise GateError('VERIFICATION_BINDING_MISMATCH')
+        controlled=[]
+        baseline={'observed':False,'expected_error':None}
+        if task.get('acceptance_template'):
+            template=self.project['acceptance_templates'][task['acceptance_template']]
+            source=self.repo/template['source']; destination=template['destination']
+            frozen_blob=git(self.repo,'rev-parse',subject['base']+':'+template['source'])
+            candidate_blob=git(worktree,'rev-parse',head+':'+destination)
+            if frozen_blob!=candidate_blob or frozen_blob!=git(self.repo,'hash-object',str(source)):
+                raise GateError('FROZEN_ACCEPTANCE_MISMATCH')
+            controlled.append({'writer':'trusted controller; not Builder','template':task['acceptance_template'],
+                'source':template['source'],'destination':destination,'frozen_blob':frozen_blob,
+                'candidate_blob':candidate_blob,'sha256':hashlib.sha256(source.read_bytes()).hexdigest()})
+            red_path=folder/'baseline-red/checks.json'; red=json.loads(red_path.read_text())
+            expected=template['expected_red']
+            if not payload.get('baseline_red') or red.get('returncode')==0 or expected not in red.get('stderr',''):
+                raise GateError('MISSING_BASELINE_RED_EVIDENCE')
+            baseline={'observed':True,'expected_error':expected,'returncode':red['returncode'],
+                      'record_sha256':hashlib.sha256(red_path.read_bytes()).hexdigest()}
+        changed=git(worktree,'diff','--name-only',subject['base'],head).splitlines()
+        if not set(changed)<=set(task['paths'])|{x['destination'] for x in controlled}:
+            raise GateError('REVIEW_SCOPE_MISMATCH')
+        decision=route(task,'Builder',payload['attempts']-1)
+        profile=profiles(self.mode)[decision['profile']]
+        records=sorted((folder/f'Builder-{payload["attempts"]-1}').glob('invocation-*/native/metadata.json'))
+        metadata=json.loads(records[-1].read_text()) if records else {}
+        authority={str(p.relative_to(self.repo)):p.read_text() for p in
+                   [*self.repo.glob('docs/spec.md'),*sorted(self.repo.glob('docs/adr/*.md'))]}
+        return {'base':subject['base'],'head':head,'rules':subject['rules'],
+            'approval':{'subject_digest':digest(subject),'valid_for_exact_subject':True},
+            'diff':git(worktree,'diff',subject['base'],head,'--',*payload['allowed']),
+            'builder_allowed_paths':task['paths'],'controller_acceptance':controlled,
+            'changed_paths':changed,'verification':verification,'authority_documents':authority,
+            'builder_dispatch':{'tier':decision['tier'],'profile':decision['profile'],'harness':profile['harness'],
+                'provider':profile['provider'],'requested_model':profile.get('model'),
+                'actual_model':metadata.get('actual_model'),'reported_models':metadata.get('reported_models')},
+            'baseline_red':baseline,
+            'output_contract':{'approved':'boolean recommendation, not human approval',
+                'findings':['only unresolved actionable defects or evidence gaps; otherwise empty'],
+                'report':'string: identity, verification, static observations, limits and next steps'}}
 
     def _publish(self,number,task,payload,folder,state):
         self._frozen(payload)
@@ -335,15 +422,16 @@ class Engine:
                             return {'run':run,'state':'WAITING_PLAN_APPROVAL','plan':payload['plan']}
                     self._build(number,task,subject,payload,folder,gateway,state)
                     self._frozen(payload)
-                    diff=git(payload['worktree'],'diff',subject['base'],payload['head'],'--',*payload['allowed'])
                     state('REVIEW')
-                    review=self.stage('Reviewer',task,{'base':subject['base'],'head':payload['head'],'diff':diff,
-                        'checks':'隔离确定性检查通过','output_contract':{'approved':'boolean','findings':['string']}},gateway,folder/'Reviewer')
+                    review_context=self._review_context(task,subject,payload,folder)
+                    review=self.stage('Reviewer',task,review_context,gateway,folder/'Reviewer')
                     payload['review']=review
                     if review.get('approved') is not True or review.get('findings'):
                         raise GateError('REVIEW_CHANGES_REQUESTED')
-                    self._frozen(payload)
-                    payload['review_binding']=digest([subject['base'],payload['head'],subject['rules']])
+                    # 原生审查可能较久；产物返回后再次校验批准、规则和同一份证据。
+                    if digest(self._review_context(task,subject,payload,folder))!=digest(review_context):
+                        raise GateError('REVIEW_EVIDENCE_CHANGED')
+                    payload['review_binding']=digest([subject['base'],payload['head'],subject['rules'],review_context,review])
                     if publish: self._publish(number,task,payload,folder,state)
                     state('KNOWLEDGE')
                     evidence={'base':subject['base'],'head':payload['head'],'checks':'隔离单元测试通过','review_binding':payload['review_binding'],

@@ -81,12 +81,17 @@ def rule_hash(repo):
     paths+=list((repo/'.workflow/acceptance').glob('*.py'))
     paths+=list((repo/'config').glob('*.json'))
     paths+=list((repo/'scripts').glob('*.py'))+list((repo/'scripts').glob('*.cjs'))
+    paths+=list((repo/'docs').glob('spec.md'))+list((repo/'docs/adr').glob('*.md'))
     paths+=list((STARTER/'roles').glob('*.md'))+[STARTER/'workflow.json']
     return digest({str(p.relative_to(repo)) if p.is_relative_to(repo) else p.name:p.read_text() for p in sorted(paths)})
 
 
 def role_prompt(role,task,context):
     contract=(STARTER/'roles'/f'{role}.md').read_text()
+    if role=='Reviewer':
+        contract+=('\n审查产物协议：approved 只是审查建议；findings 仅包含未解决、可操作的缺陷或证据缺口。'
+                   '任务身份、静态通过说明、验证结果、风险边界和下一步放入 report，不混入 findings。'
+                   '没有未解决问题时 findings 为 []；缺少必要证据仍应拒绝，不得为了通过而忽略问题。\n')
     return (contract+'\n\n本轮为已授权的隔离工作流验证；只处理下方提供的数据，不调用工具、不得批准自己。\n'
             '只输出一个 JSON 对象，不加 Markdown 或其他解释。\n'
             +json.dumps({'task_data':task,'context':context},ensure_ascii=False))
