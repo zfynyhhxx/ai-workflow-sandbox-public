@@ -1,5 +1,6 @@
 """控制流回归使用隔离临时仓库与替身；真实 CLI/CI 的证据单独记录。"""
 import copy
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -27,6 +28,7 @@ class FlowTests(unittest.TestCase):
         git(self.repo,'config','user.email','unit@users.noreply.github.com')
         (self.repo/'.workflow').mkdir()
         (self.repo/'.workflow/project.json').write_text(json.dumps({'repository':'unit/repo','base_branch':'main','acceptance_templates':{}}))
+        (self.repo/'scripts').mkdir(); (self.repo/'scripts/verify_core.py').write_text('# unit verification fixture\n')
         (self.repo/'README.md').write_text('unit\n')
         git(self.repo,'add','.'); git(self.repo,'commit','-m','unit baseline')
         self.engine=Engine(self.repo,self.root/'state',mode='validation')
@@ -39,16 +41,40 @@ class FlowTests(unittest.TestCase):
                       patch.object(self.engine,'subject',side_effect=lambda t:self.subject),
                       patch('workflowkit.engine.Gateway',FakeGateway),
                       patch.object(self.engine,'stage',side_effect=self.stage),
-                      patch.object(self.engine,'gate')]
+                      patch.object(self.engine,'gate',side_effect=self.fake_gate)]
         for p in self.patches: p.start(); self.addCleanup(p.stop)
         self.engine.store.approve(self.subject,'run')
     def stage(self,role,*args,**kw):
         self.calls.append(role)
+        if role=='Reviewer': self.review_context=args[1]
         return {'Director':{'phase':'planned','next_step':'plan'},
                 'Planner':{'summary':'unit plan','steps':['write approved file'],'risks':[]},
                 'Builder':{'files':[{'path':'demo/labels.py','content':'value = 1\n'}],'summary':'unit'},
                 'Reviewer':{'approved':True,'findings':[]},
                 'Knowledge':{'create':False,'title':'','body':''}}[role]
+    def fake_gate(self,worktree,folder):
+        # 明确的替身证据；不得在真实实现中允许缺失记录时继续。
+        if folder.name=='baseline-red':
+            (folder/'checks.json').write_text(json.dumps({'returncode':1,'stdout':'','stderr':'unit missing module'}))
+            raise GateError('unit expected red')
+        core={'schema':'wf-core-checks-v1','passed':True,'steps':[
+            {'name':'project-tests','command':['python3','-m','unittest'],'returncode':0,'tests':1,'passed':True},
+            {'name':'starter-tests','command':['python3','-m','unittest'],'returncode':0,'tests':1,'passed':True},
+            {'name':'syntax-and-config','returncode':0,'passed':True,'parsed':[]}]}
+        record=folder/'checks.json'; record.write_text(json.dumps({'returncode':0,'stdout':json.dumps(core),'stderr':'unit fixture'}))
+        proof={'schema':'wf-verification-v1','tree':git(worktree,'write-tree'),'core':core,
+               'core_sha256':hashlib.sha256((self.repo/'scripts/verify_core.py').read_bytes()).hexdigest(),
+               'record_sha256':hashlib.sha256(record.read_bytes()).hexdigest(),
+               'isolation':{'unit_fixture':True},'static_checks':[{'command':['unit fixture'],'returncode':0}]}
+        (folder/'verification.json').write_text(json.dumps(proof))
+        return proof
+    def acceptance_fixture(self):
+        self.task['acceptance_template']='unit-frozen'
+        template={'source':'.workflow/acceptance/frozen.py','destination':'tests/test_frozen.py','expected_red':'unit missing module'}
+        self.engine.project['acceptance_templates']['unit-frozen']=template
+        source=self.repo/template['source']; source.parent.mkdir(); source.write_text('# frozen unit acceptance\n')
+        git(self.repo,'add','.'); git(self.repo,'commit','-m','freeze unit acceptance')
+        self.subject['base']=git(self.repo,'rev-parse','HEAD'); self.engine.store.approve(self.subject,'run')
     def test_complete_local_flow_then_idempotent(self):
         result=self.engine.run(1,publish=False)
         self.assertEqual(result['state'],'WAITING_HUMAN')
@@ -88,6 +114,80 @@ class FlowTests(unittest.TestCase):
         self.engine.stage.side_effect=stage
         with self.assertRaisesRegex(GateError,'REVIEW'): self.engine.run(1,publish=False)
         self.assertEqual(self.engine.latest(1)[0]['state'],'FAILED')
+    def test_reviewer_receives_bound_validation_and_controller_provenance(self):
+        self.acceptance_fixture()
+        self.engine.run(1,publish=False)
+        context=self.review_context
+        self.assertTrue(context['approval']['valid_for_exact_subject'])
+        self.assertTrue(context['baseline_red']['observed'])
+        self.assertEqual(context['baseline_red']['returncode'],1)
+        self.assertEqual(context['builder_allowed_paths'],['demo/labels.py'])
+        provenance=context['controller_acceptance'][0]
+        self.assertEqual(provenance['destination'],'tests/test_frozen.py')
+        self.assertEqual(provenance['frozen_blob'],provenance['candidate_blob'])
+        self.assertTrue(context['verification']['core']['passed'])
+        self.assertEqual(context['verification']['tree'],git(self.engine.latest(1)[1]['worktree'],'rev-parse','HEAD^{tree}'))
+        self.assertEqual(context['builder_dispatch']['tier'],'T3')
+        self.assertIsNone(context['builder_dispatch']['actual_model'])
+        self.assertNotIn(str(self.root),json.dumps(context))
+        self.assertNotIn('token',context['approval']); self.assertNotIn('signature',context['approval'])
+    def test_verification_record_change_stops_before_reviewer(self):
+        original=self.engine._build
+        def altered(*args):
+            original(*args)
+            path=args[4]/'check-0/checks.json'; path.write_text(path.read_text()+'\n')
+        with patch.object(self.engine,'_build',side_effect=altered):
+            with self.assertRaisesRegex(GateError,'BINDING'): self.engine.run(1,publish=False)
+        self.assertNotIn('Reviewer',self.calls)
+    def test_missing_verification_stops_before_reviewer(self):
+        original=self.engine._build
+        def altered(*args): original(*args); args[3].pop('verification')
+        with patch.object(self.engine,'_build',side_effect=altered):
+            with self.assertRaisesRegex(GateError,'MISSING_VERIFICATION'): self.engine.run(1,publish=False)
+        self.assertNotIn('Reviewer',self.calls)
+    def test_corrupt_verification_file_stops_before_reviewer(self):
+        original=self.engine._build
+        def altered(*args): original(*args); (args[4]/'check-0/checks.json').write_text('{}')
+        with patch.object(self.engine,'_build',side_effect=altered):
+            with self.assertRaisesRegex(GateError,'INVALID_VERIFICATION'): self.engine.run(1,publish=False)
+        self.assertNotIn('Reviewer',self.calls)
+    def test_changed_frozen_template_stops_before_reviewer(self):
+        self.acceptance_fixture(); original=self.engine._build
+        def altered(*args):
+            original(*args); (self.repo/'.workflow/acceptance/frozen.py').write_text('# changed unit acceptance\n')
+        with patch.object(self.engine,'_build',side_effect=altered):
+            with self.assertRaisesRegex(GateError,'FROZEN_ACCEPTANCE'): self.engine.run(1,publish=False)
+        self.assertNotIn('Reviewer',self.calls)
+    def test_approved_with_any_findings_still_blocks(self):
+        original=self.stage
+        def stage(role,*args,**kw):
+            if role=='Reviewer': return {'approved':True,'findings':['unresolved evidence gap'],'report':'unit info'}
+            return original(role,*args,**kw)
+        self.engine.stage.side_effect=stage
+        with self.assertRaisesRegex(GateError,'REVIEW'): self.engine.run(1,publish=False)
+        self.assertNotIn('Knowledge',self.calls)
+    def test_rules_changed_during_reviewer_never_publish(self):
+        original=self.stage
+        def stage(role,*args,**kw):
+            value=original(role,*args,**kw)
+            if role=='Reviewer': self.subject=self.subject|{'rules':'unit changed during reviewer'}
+            return value
+        self.engine.stage.side_effect=stage
+        with patch.object(self.engine,'_publish') as publish:
+            with self.assertRaisesRegex(GateError,'REVIEW_APPROVAL_CHANGED'): self.engine.run(1)
+        publish.assert_not_called(); self.assertNotIn('Knowledge',self.calls)
+    def test_expired_approval_during_reviewer_never_publish(self):
+        original=self.stage
+        def stage(role,*args,**kw):
+            value=original(role,*args,**kw)
+            if role=='Reviewer':
+                # 只使本测试临时账本中的模拟批准过期，绝不访问真实批准。
+                with self.engine.store.connect() as c: c.execute('UPDATE approvals SET expiry=0')
+            return value
+        self.engine.stage.side_effect=stage
+        with patch.object(self.engine,'_publish') as publish:
+            with self.assertRaisesRegex(GateError,'REVIEW_APPROVAL_CHANGED'): self.engine.run(1)
+        publish.assert_not_called(); self.assertNotIn('Knowledge',self.calls)
     def test_candidate_mutation_invalidates_review(self):
         result=self.engine.run(1,publish=False)
         _,data=self.engine.latest(1)
